@@ -1,0 +1,13 @@
+<ncs-package xmlns="http://tail-f.com/ns/ncs-packages">
+  <name>health-snapshot</name>
+  <package-version>1.0</package-version>
+  <description>Execute health assessments on a device and compare pre/post checks</description>
+  <ncs-min-version>4.5</ncs-min-version>
+
+  <component>
+    <name>main</name>
+    <application>
+      <python-class-name>health_snapshot.main.Main</python-class-name>
+    </application>
+  </component>
+</ncs-package>

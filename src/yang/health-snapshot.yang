@@ -1,0 +1,203 @@
+// =========================================================================
+//  HEALTH-SNAPSHOT PACKAGE MODEL
+// =========================================================================
+
+module health-snapshot {
+
+  namespace "http://com/ciscoas/services/health-snapshot";
+  prefix snap;
+
+  import ietf-inet-types { prefix inet; }
+  import tailf-common { prefix tailf; }
+  import tailf-ncs { prefix ncs; }
+
+  organization "Cisco Systems, Inc.";
+
+  contact
+    " Marcelo Reis
+      mareis@cisco.com
+    ";
+
+  description
+    " Run health assessments on a device and store results in a timestamped table
+      that can be used during pre-post checks.
+    ";
+
+  // =========================================================================
+  //  REVISION
+  // =========================================================================
+
+  revision 2018-3-27 {
+    description
+      "Initial revision.";
+  }
+
+
+  // =========================================================================
+  //  TYPEDEF
+  // =========================================================================
+
+  typedef sequence-number {
+    type uint8 {
+      tailf:info "<1-255>";
+      range "1..255";
+    }
+  }
+
+
+  // =========================================================================
+  //  SERVICES
+  // =========================================================================
+
+  augment /ncs:services {
+    container health-samples {
+      tailf:info "Run health assessments on a device and store results";
+      tailf:cli-add-mode;
+
+      container setup {
+        tailf:info "Health snapshots configuration";
+        tailf:cli-add-mode;
+
+        leaf max-samples {
+          tailf:info "Maximum number of samples to store";
+          type uint16;
+          default 2;
+        }
+
+        leaf stop-on-error {
+          tailf:info "Whether to stop or continue an assessment when a command fails";
+          type boolean;
+          default false;
+        }
+      }
+
+      list assessment {
+        tailf:info "Define a health assessment";
+        key name;
+
+        leaf name {
+          tailf:info "A name identifying this assessment";
+          type string;
+        }
+
+        list command {
+          tailf:info "List of commands to run";
+          key seq;
+          leaf seq {
+            tailf:info "Unique sequence number, defines order in which command should be executed";
+            type sequence-number;
+          }
+          leaf run {
+            tailf:info "Command to run";
+            type string;
+          }
+          leaf parse {
+            tailf:info "Regular expression defining fields to parse from output";
+            type string;
+            default "^(.*)";
+          }
+          leaf expect {
+            tailf:info "Regular expression to match against parsed output";
+            type string;
+          }
+        } // list command
+      } // list assessment
+
+      list device {
+        tailf:info "Device assessment samples";
+        key name;
+
+        leaf name {
+          tailf:info "Device name";
+          type leafref {
+            path "/ncs:devices/ncs:device/ncs:name";
+          }
+        }
+
+        leaf assessment-name {
+          tailf:info "Identify the assessment used for this device";
+          type leafref {
+            path "/ncs:services/snap:health-samples/snap:assessment/snap:name";
+          }
+          mandatory true;
+        }
+
+        tailf:action run {
+          tailf:info "Perform assessment";
+          tailf:actionpoint run-assessment;
+          input {
+          }
+          output {
+            leaf success {
+              type string;
+            }
+            leaf failure {
+              type string;
+            }
+          }
+        }
+
+        tailf:action clear {
+          tailf:info "Clear all assessments";
+          tailf:actionpoint clear-assessments;
+          input {
+          }
+          output {
+            leaf success {
+              type string;
+            }
+            leaf failure {
+              type string;
+            }
+          }
+        }
+
+        tailf:action diff {
+          tailf:info "Perform diff between latest two assessments";
+          tailf:actionpoint diff-assessments;
+          input {
+          }
+          output {
+            leaf success {
+              type string;
+            }
+            leaf failure {
+              type string;
+            }
+          }
+        }
+
+        list sample {
+          config false;
+          tailf:cdb-oper {
+            tailf:persistent true;
+          }
+          key timestamp;
+
+          leaf timestamp {
+            type int64;
+          }
+
+          list command {
+            key seq;
+            leaf seq {
+              type leafref {
+                path "/ncs:services/snap:health-samples/snap:assessment/snap:command/snap:seq";
+              }
+            }
+            leaf output {
+              description "Output of the command";
+              type string;
+            }
+            leaf passed {
+              description "Indicates whether the command passed or failed (e.g. true or false)";
+              type boolean;
+            }
+          }
+        } // list sample
+
+      } // list device
+
+    } // container health-samples
+  }
+}

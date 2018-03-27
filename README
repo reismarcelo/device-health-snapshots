@@ -1,0 +1,44 @@
+Health snapshots package
+------------------------
+
+1) Initial setup
+
+services health-samples
+ setup
+  max-samples   3
+  stop-on-error true
+ !
+ assessment pe-check
+  command 1
+   run    "show platform"
+   parse  "^\d+(?:/[A-Z0-9]+)+[ \t]+[^ \t]+[ \t]+(.+?)[ \t]+[^ \t]+$"
+   expect "(IOS XR RUN|OK)"
+  !
+  command 2
+   run    "show ospf neighbor"
+   parse  "^\d+(?:\.\d+){3}[ \t]+\d+[ \t]+(\w+)"
+   expect FULL
+  !
+ !
+ device A3-ASR9K-R6
+  assessment-name pe-check
+ !
+!
+
+
+2) Running the different actions
+
+admin@ncs# services health-samples device A3-ASR9K-R6 run
+success Assessment completed without errors
+
+admin@ncs# services health-samples device A3-ASR9K-R6 run
+success Assessment completed without errors
+
+admin@ncs# services health-samples device A3-ASR9K-R6 diff
+success Diff passed
+
+admin@ncs# services health-samples device A3-ASR9K-R6 clear
+success Cleared all assessments from device
+
+
+
