@@ -8,6 +8,13 @@ services health-samples
   max-samples   3
   stop-on-error true
  !
+ assessment device-up
+  command 1
+   run    "show platform"
+   parse  "^\d+(?:/[A-Z0-9]+)+[ \t]+[^ \t]+[ \t]+(.+?)[ \t]+[^ \t]+$"
+   expect "(IOS XR RUN|OK)"
+  !
+ !
  assessment pe-check
   command 1
    run    "show platform"
@@ -21,7 +28,8 @@ services health-samples
   !
  !
  device A3-ASR9K-R6
-  assessment-name pe-check
+  assessment             pe-check
+  lightweight-assessment device-up
  !
 !
 

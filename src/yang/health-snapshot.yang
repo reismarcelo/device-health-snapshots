@@ -27,11 +27,15 @@ module health-snapshot {
   //  REVISION
   // =========================================================================
 
-  revision 2018-3-27 {
+  revision 2018-03-27 {
     description
       "Initial revision.";
   }
 
+  revision 2018-03-29 {
+    description
+      "Added lightweight assessments.";
+  }
 
   // =========================================================================
   //  TYPEDEF
@@ -114,7 +118,7 @@ module health-snapshot {
           }
         }
 
-        leaf assessment-name {
+        leaf assessment {
           tailf:info "Identify the assessment used for this device";
           type leafref {
             path "/ncs:services/snap:health-samples/snap:assessment/snap:name";
@@ -122,9 +126,31 @@ module health-snapshot {
           mandatory true;
         }
 
+        leaf lightweight-assessment {
+          tailf:info "Identify the lightweight assessment used for this device";
+          type leafref {
+            path "/ncs:services/snap:health-samples/snap:assessment/snap:name";
+          }
+        }
+
         tailf:action run {
           tailf:info "Perform assessment";
           tailf:actionpoint run-assessment;
+          input {
+          }
+          output {
+            leaf success {
+              type string;
+            }
+            leaf failure {
+              type string;
+            }
+          }
+        }
+
+        tailf:action run-light {
+          tailf:info "Perform lightweight assessment";
+          tailf:actionpoint run-light-assessment;
           input {
           }
           output {

@@ -13,46 +13,24 @@ from itertools import islice
 class RunAssessment(Action):
     @Action.action
     def cb_action(self, uinfo, name, kp, input, output):
-
-        def cmd_evaluate(cmd_output, parse_regex, expect_regex):
-            token_list = cmd_parse(cmd_output, parse_regex)
-            return len(token_list) > 0 and all(
-                map(lambda parsed_item: re.match(expect_regex, parsed_item, re.MULTILINE) is not None, token_list)
-            )
-
         self.log.info("Action {}".format(name))
         action_set_timeout(uinfo, 240)
 
-        # Execute assessment
-        outcome_list = []
-        with ncs.maapi.single_read_trans(uinfo.username, "system") as read_t:
-            root = ncs.maagic.get_root(read_t)
-            # kp sample: /ncs:services/snap:health-samples/device{IOS-0}
-            kp_node = ncs.maagic.cd(root, kp)
+        try:
+            # Run assessment
+            with ncs.maapi.single_read_trans(uinfo.username, "system") as read_t:
+                root = ncs.maagic.get_root(read_t)
+                # kp sample: /ncs:services/snap:health-samples/device{IOS-0}
+                kp_node = ncs.maagic.cd(root, kp)
 
-            assessment = root.ncs__services.snap__health_samples.snap__assessment[kp_node.snap__assessment_name]
-            device = root.devices.device[kp_node.snap__name]
+                assessment_name = kp_node.snap__assessment
 
-            cmd_list = [(cmd.seq, cmd.run, cmd.parse, cmd.expect) for cmd in assessment.snap__command]
-            for seq, run, parse, expect in sorted(cmd_list, key=lambda cmd_entry: cmd_entry[0]):
-                exec_any = live_status_any(device)
-                exec_any_input = exec_any.get_input()
-                exec_any_input.args = [run]
+                results = run_assessment(root.devices.device[kp_node.snap__name],
+                                         root.ncs__services.snap__health_samples.snap__setup.snap__stop_on_error,
+                                         root.ncs__services.snap__health_samples.snap__assessment[assessment_name],
+                                         self.log)
 
-                result = exec_any(exec_any_input).result
-                passed = expect is None or cmd_evaluate(result, parse, expect)
-
-                outcome_list.append(
-                    (seq, result, passed)
-                )
-
-                self.log.info("{}, '{}' ({}), pass: {}".format(device.name, run, seq, passed))
-
-                if not passed and root.ncs__services.snap__health_samples.snap__setup.snap__stop_on_error:
-                    break
-
-        # Save assessment sample
-        if len(outcome_list) > 0:
+            # Save assessment sample
             with ncs.maapi.single_write_trans(uinfo.username, "system", db=ncs.OPERATIONAL) as write_t:
                 root = ncs.maagic.get_root(write_t)
                 kp_node = ncs.maagic.cd(root, kp)
@@ -61,7 +39,7 @@ class RunAssessment(Action):
                 timestamp = int(time())
                 new_sample = kp_node.snap__sample.create(timestamp)
 
-                for seq, result, passed in outcome_list:
+                for seq, result, passed in results:
                     new_cmd = new_sample.snap__command.create(seq)
                     new_cmd.snap__output = result
                     new_cmd.snap__passed = passed
@@ -78,15 +56,53 @@ class RunAssessment(Action):
                 self.log.info("Saved assessment: {}, timestamp: {}".format(kp_node.snap__name, timestamp))
 
             # Figure out the outcome
-            assessment_outcome = all(map(lambda entry: entry[2], outcome_list))
+            assessment_outcome = all(map(lambda entry: entry[2], results))
             if assessment_outcome:
                 output.success = "Assessment completed without errors"
             else:
-                failed_cmds = ', '.join([str(seq) for seq, result, passed in outcome_list if not passed])
-                output.failure = "The following commands failed: {}".format(failed_cmds)
+                failed_cmds = ', '.join([str(seq) for seq, result, passed in results if not passed])
+                output.failure = "Assessment completed with errors. Commands that failed: {}".format(failed_cmds)
 
-        else:
-            output.failure = "Assessment failed"
+        except AssessmentError as e:
+            output.failure = "Assessment error: {}".format(e)
+            self.log.info("Assessment error: {}".format(e))
+
+
+class RunLightAssessment(Action):
+    @Action.action
+    def cb_action(self, uinfo, name, kp, input, output):
+        self.log.info("Action {}".format(name))
+        action_set_timeout(uinfo, 240)
+
+        try:
+            # Run assessment
+            results = None
+            with ncs.maapi.single_read_trans(uinfo.username, "system") as read_t:
+                root = ncs.maagic.get_root(read_t)
+                # kp sample: /ncs:services/snap:health-samples/device{IOS-0}
+                kp_node = ncs.maagic.cd(root, kp)
+
+                assessment_name = kp_node.snap__lightweight_assessment
+
+                if assessment_name is None:
+                    raise AssessmentError("No lightweight assessment defined for {}".format(kp_node.snap__name))
+
+                results = run_assessment(root.devices.device[kp_node.snap__name],
+                                         root.ncs__services.snap__health_samples.snap__setup.snap__stop_on_error,
+                                         root.ncs__services.snap__health_samples.snap__assessment[assessment_name],
+                                         self.log)
+
+            # Figure out the outcome
+            assessment_outcome = all(map(lambda entry: entry[2], results))
+            if assessment_outcome:
+                output.success = "Assessment completed without errors"
+            else:
+                failed_cmds = ', '.join([str(seq) for seq, result, passed in results if not passed])
+                output.failure = "Assessment completed with errors. Commands that failed: {}".format(failed_cmds)
+
+        except AssessmentError as e:
+            output.failure = "Assessment error: {}".format(e)
+            self.log.info("Lightweight assessment error: {}".format(e))
 
 
 class ClearAssessments(Action):
@@ -130,7 +146,7 @@ class DiffAssessments(Action):
                 if len(ts_list) < 2:
                     raise DiffFailed("Not enough samples to complete")
 
-                assessment = root.ncs__services.snap__health_samples.snap__assessment[kp_node.snap__assessment_name]
+                assessment = root.ncs__services.snap__health_samples.snap__assessment[kp_node.snap__assessment]
                 parse_dict = {cmd.seq: cmd.parse for cmd in assessment.snap__command}
 
                 last_ts, prev_ts = ts_list[-1], ts_list[-2]
@@ -166,6 +182,11 @@ class DiffAssessments(Action):
                 self.log.info("Diff assessment failed: {}".format(e))
 
 
+class AssessmentError(Exception):
+    """ Exception indicating error while running an assessment """
+    pass
+
+
 class DiffFailed(Exception):
     """ Exception indicating error in assessment diff """
     pass
@@ -189,6 +210,38 @@ def cmd_parse(command_output, parse_regex):
     return re.findall(parse_regex, command_output, re.MULTILINE)
 
 
+def run_assessment(device_node, stop_on_error, assessment_node, logger):
+    def cmd_evaluate(cmd_output, parse_regex, expect_regex):
+        token_list = cmd_parse(cmd_output, parse_regex)
+        return len(token_list) > 0 and all(
+            map(lambda parsed_item: re.match(expect_regex, parsed_item, re.MULTILINE) is not None, token_list)
+        )
+
+    outcome_list = []
+    cmd_list = [(cmd.seq, cmd.run, cmd.parse, cmd.expect) for cmd in assessment_node.snap__command]
+    for seq, run, parse, expect in sorted(cmd_list, key=lambda cmd_entry: cmd_entry[0]):
+        exec_any = live_status_any(device_node)
+        exec_any_input = exec_any.get_input()
+        exec_any_input.args = [run]
+
+        result = exec_any(exec_any_input).result
+        passed = expect is None or cmd_evaluate(result, parse, expect)
+
+        outcome_list.append(
+            (seq, result, passed)
+        )
+
+        logger.info("{}, '{}' ({}), pass: {}".format(device_node.name, run, seq, passed))
+
+        if not passed and stop_on_error:
+            break
+
+    if len(outcome_list) < 1:
+        raise AssessmentError("Assessment failed to run")
+
+    return outcome_list
+
+
 # ---------------------------------------------
 # COMPONENT THREAD THAT WILL BE STARTED BY NCS.
 # ---------------------------------------------
@@ -198,6 +251,7 @@ class Main(ncs.application.Application):
 
         # Registration of action callbacks
         self.register_action('run-assessment', RunAssessment)
+        self.register_action('run-light-assessment', RunLightAssessment)
         self.register_action('clear-assessments', ClearAssessments)
         self.register_action('diff-assessments', DiffAssessments)
 
