@@ -5,6 +5,8 @@ from _ncs.dp import action_set_timeout
 import re
 from time import time
 from itertools import islice
+from collections import namedtuple
+from operator import itemgetter, attrgetter
 
 
 # ---------------------------------------------
@@ -56,7 +58,7 @@ class RunAssessment(Action):
                 self.log.info("Saved assessment: {}, timestamp: {}".format(kp_node.snap__name, timestamp))
 
             # Figure out the outcome
-            assessment_outcome = all(map(lambda entry: entry[2], results))
+            assessment_outcome = all(map(attrgetter('passed'), results))
             if assessment_outcome:
                 output.success = "Assessment completed without errors"
             else:
@@ -93,7 +95,7 @@ class RunLightAssessment(Action):
                                          self.log)
 
             # Figure out the outcome
-            assessment_outcome = all(map(lambda entry: entry[2], results))
+            assessment_outcome = all(map(attrgetter('passed'), results))
             if assessment_outcome:
                 output.success = "Assessment completed without errors"
             else:
@@ -129,8 +131,9 @@ class DiffAssessments(Action):
             :param sample_node: maagic node representing a sample instance
             :return: list of (seq, output, passed) tuples
             """
-            return ((cmd.seq, cmd.output, cmd.passed) for cmd in
-                    sorted(sample_node.command, key=lambda cmd_entry: cmd_entry.seq))
+            return (
+                (cmd.seq, cmd.output, cmd.passed) for cmd in sorted(sample_node.command, key=attrgetter('seq'))
+            )
 
         self.log.info("Action {}".format(name))
         action_set_timeout(uinfo, 240)
@@ -210,6 +213,9 @@ def cmd_parse(command_output, parse_regex):
     return re.findall(parse_regex, command_output, re.MULTILINE)
 
 
+EvalEntry = namedtuple('EvalEntry', ['seq', 'result', 'passed'])
+
+
 def run_assessment(device_node, stop_on_error, assessment_node, logger):
     def cmd_evaluate(cmd_output, parse_regex, expect_regex):
         token_list = cmd_parse(cmd_output, parse_regex)
@@ -219,7 +225,7 @@ def run_assessment(device_node, stop_on_error, assessment_node, logger):
 
     outcome_list = []
     cmd_list = [(cmd.seq, cmd.run, cmd.parse, cmd.expect) for cmd in assessment_node.snap__command]
-    for seq, run, parse, expect in sorted(cmd_list, key=lambda cmd_entry: cmd_entry[0]):
+    for seq, run, parse, expect in sorted(cmd_list, key=itemgetter(0)):
         exec_any = live_status_any(device_node)
         exec_any_input = exec_any.get_input()
         exec_any_input.args = [run]
@@ -228,7 +234,7 @@ def run_assessment(device_node, stop_on_error, assessment_node, logger):
         passed = expect is None or cmd_evaluate(result, parse, expect)
 
         outcome_list.append(
-            (seq, result, passed)
+            EvalEntry(seq, result, passed)
         )
 
         logger.info("{}, '{}' ({}), pass: {}".format(device_node.name, run, seq, passed))
